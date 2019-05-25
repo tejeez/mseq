@@ -6,6 +6,7 @@ template<T t> T Lerp(T val,T min, T max) {
 
 const double SECONDS_PER_TICK=0.001;
 const double MIN_BPM=20.0,MAX_BPM=200.0;
+const double MIN_SWING=0.1,MAX_SWING=0.9;
 const int num_of_columns;
 
 double bpm=10.0;
@@ -17,13 +18,14 @@ BusOut column_multiplex_selector();;
 BusIn row_input_full(), row_input_half();
 BusOut bnc_output(1,2,3,4,5,6);
 
-AnalogIn tempo_potentiometer();
+AnalogIn tempo_potentiometer(), swing_potentiometer();
 
 Ticker main_ticker;
 
 void global_tick_cb() {
+	double swing=Lerp(swing_potentiometer.read(),MIN_SWING,MAX_SWING);
 	bnc_output=row_input_full;
-	if(delta<0.5) {
+	if(delta<swing) {
 		bnc_output|=row_input_half;
 	}
 
