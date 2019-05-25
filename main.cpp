@@ -1,5 +1,9 @@
 #include "mbed.h"
 
+template<T t> T Lerp(T val,T min, T max) {
+	return val*(max-min)+min;
+}
+
 const double SECONDS_PER_TICK=0.001;
 const double MIN_BPM=20.0,MAX_BPM=200.0;
 const int num_of_columns;
@@ -41,9 +45,8 @@ int main() {
 	main_ticker.attach(&global_tick_cb,SECONDS_PER_TICK);
 
 	while(1) {
-		// update bpm
-		float tempo_setting=tempo_potentiometer.read();
-		bpm=tempo_setting*(MAX_BPM-MIN_BPM)+MIN_BPM;
+		// update bpm in non-timed thread
+		bpm=Lerp(tempo_potentiometer.read(),MIN_BPM,MAX_BPM);
 
 		wait(0.01f);
 	}
