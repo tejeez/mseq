@@ -7,15 +7,16 @@ template<typename T> T Lerp(T val,T min, T max) {
 const float SECONDS_PER_TICK=0.001;
 const float MIN_BPM=20.0,MAX_BPM=200.0;
 const float MIN_SWING=0.0,MAX_SWING=0.9;
-const int num_of_columns=8, num_of_channels=6, num_of_options=4;
+const int num_of_columns=16, num_of_channels=6;
 const int num_of_beats=4; // used for everyother effect
-const int SWITCH_COLUMNS = 18, SWITCH_ROWS = 6;
-const int OPTION1_COLUMN = 16, OPTION2_COLUMN = 17;
+const int SWITCH_COLUMNS = 19, SWITCH_ROWS = 6;
+const int OPTION1_COLUMN = 16, OPTION2_COLUMN = 17, GLOBAL_OPTION_COLUMN=18;
 
 float bpm=125.0, swing=0.0;
 float delta=0.0;
 float pwmScale=1000.0,pwmWidth=500.0;
-int curtick=0,curbeat=0,curtick2=0;
+volatile int curtick=0,curtick2=0;
+int curbeat=0;
 int pattern_length_1=16, pattern_length_2=16;
 
 // PREVIOUS == previous channel
@@ -42,22 +43,14 @@ DigitalOut bnc2_output[num_of_channels] = {
 	PC_13, PC_14, PC_15
 };
 
-BusIn options_input(PG_0, PE_1, PG_9, PG_12); // two left-most switches under the potentiometers. placeholder pins
-
-AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_4), length1_potentiometer(PB_0), length2_potentiometer(PC_0);
-
-const uint32_t OPTION_SYNC = 1;
-
-/*
- * Matrix readout stuff:
- */
+AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_1), length1_potentiometer(PC_1), length2_potentiometer(PC_0);
 
 DigitalOut column_multiplex_selector[SWITCH_COLUMNS] = {
 	PG_6,  PG_5,  PG_8,  PE_0,
 	PF_11, PF_15, PF_3,  PE_11,
 	PE_9,  PF_14, PD_15, PD_14,
-	PE_7,  PF_10,  PE_8, PF_4,
-	PF_5,  PB_1
+	PE_7,  PF_10, PE_8,  PF_4,
+	PF_5,  PB_15, PB_1
 };
 
 /* Two consecutive bits in this BusIn indicate the state of each switch.
@@ -70,42 +63,25 @@ BusIn switch_input(
 		PG_14, PD_10, PG_7,  PG_4
 );
 
+// global option things
+const uint32_t OPTION_SYNC = 1<<8, OPTION_ASDF = 1<<9, OPTION_QWER = 1<<10, OPTION_ZXCV = 1<<11;
+
 DigitalOut col_led_out(PE_7);
 
-/* State storage: */
-bool col_leds[SWITCH_COLUMNS];
+
+/*
+ * State storage:
+ */
+char col_leds[SWITCH_COLUMNS];
 uint32_t globalOptionsCache;
 uint32_t switch_states[SWITCH_COLUMNS];
 
-/* Matrix functions: */
 enum switch_state { SWITCH_BROKEN=0, SWITCH_UP=1, SWITCH_DOWN=2, SWITCH_MID=3 };
 
 enum switch_state get_switch_state(unsigned row, unsigned col) {
 	if(col >= SWITCH_COLUMNS || row >= SWITCH_ROWS)
 		return SWITCH_DOWN;
 	return (enum switch_state)((switch_states[col] >> (2*row)) & 3);
-}
-
-void read_matrix() {
-	int col;
-	/* Column selector is active low.
-	 * First ensure all column selectors are high
-	 * and then take one of them down at a time */
-	for(col=0; col<SWITCH_COLUMNS; col++) {
-		column_multiplex_selector[col] = 1;
-	}
-
-	for(col=0; col<SWITCH_COLUMNS; col++) {
-		column_multiplex_selector[col] = 0;
-		col_led_out = col_leds[col];
-		// do all waiting here so the LED has some time to be on
-		wait(0.001f);
-		switch_states[col] = switch_input;
-		col_led_out = 0;
-		column_multiplex_selector[col] = 1;
-	}
-
-	globalOptionsCache = ~(uint32_t)options_input;
 }
 
 
@@ -183,6 +159,7 @@ void global_tick_cb() {
 
 	while(delta>=delta_max) {
 		delta-=delta_max;
+		col_leds[curtick2]=0;
 		col_leds[curtick]=0;
 		curtick++;
 		if(curtick>=num_of_columns || curtick >= pattern_length_1) {
@@ -192,10 +169,9 @@ void global_tick_cb() {
 				curbeat=0;
 			}
 		}
-		col_leds[curtick]=1;
+		col_leds[curtick]=2;
 
 		// secondary sequencer
-		col_leds[curtick2]=0;
 		curtick2++;
 		if(curtick2>=num_of_columns || curtick2 >= pattern_length_2) {
 			curtick2=0;
@@ -215,7 +191,7 @@ void global_tick_cb() {
 
 
 /*
- * Main loop:
+ * Main loops:
  */
 
 void print_states() {
@@ -223,7 +199,6 @@ void print_states() {
 	printf("\033[H\n");
 	for(row=0; row<SWITCH_ROWS; row++) {
 		for(col=0; col<SWITCH_COLUMNS; col++) {
-			//printf("%d ", (int)get_switch_state(row, col));
 			char c=' ';
 			switch(get_switch_state(row, col)) {
 				case SWITCH_UP:      c = '^'; break;
@@ -235,31 +210,90 @@ void print_states() {
 		}
 		putchar('\n');
 	}
+	printf("\n"
+		"BPM:%6.1f  Swing: %4.2f   \n"
+		"Len1: %2d  Pos1: %2d  \n"
+		"Len2: %2d  Pos2: %2d  \n"
+		,bpm, swing, pattern_length_1, curtick, pattern_length_2, curtick2);
+}
+
+
+float read_avg(AnalogIn &adc) {
+	// this might improve potentiometer reading stability
+	// by averaging each reading
+	float a = 0;
+	int i;
+	for(i=0; i<20; i++)
+		a += adc.read();
+	return a / 20.0f;
+}
+
+
+void read_potentiometers() {
+		bpm   = Lerp(read_avg(tempo_potentiometer) ,MIN_BPM,MAX_BPM);
+		swing = Lerp(read_avg(swing_potentiometer) ,MIN_SWING,MAX_SWING);
+		pattern_length_1 = (int)Lerp(read_avg(length1_potentiometer) ,16.5f,0.5f);
+		pattern_length_2 = (int)Lerp(read_avg(length2_potentiometer) ,16.5f,0.5f);
+}
+
+
+void read_matrix() {
+	int col;
+	/* Column selector is active low.
+	 * First ensure all column selectors are high
+	 * and then take one of them down at a time */
+	for(col=0; col<SWITCH_COLUMNS; col++) {
+		column_multiplex_selector[col] = 1;
+	}
+
+	for(col=0; col<SWITCH_COLUMNS; col++) {
+		column_multiplex_selector[col] = 0;
+
+		// keep LED on for 2 ms if brightness is 2,
+		// otherwise only for 200 us
+		if(col_leds[col] >= 2) {
+			col_led_out = 1;
+			ThisThread::sleep_for(2);
+		}
+
+		col_led_out = col_leds[col] >= 1;
+		wait(0.0002f);
+
+		// read switch states after waiting so voltages have settled
+		switch_states[col] = switch_input;
+
+		// finally turn off the column
+		col_led_out = 0;
+		column_multiplex_selector[col] = 1;
+	}
+
+	globalOptionsCache = ~switch_states[GLOBAL_OPTION_COLUMN];
+}
+
+
+void read_loop() {
+	for(;;) {
+		read_potentiometers();
+		read_matrix();
+		ThisThread::sleep_for(2);
+	}
 }
 
 
 Ticker main_ticker;
+Thread read_thread;
 
 int main() {
 	switch_input.mode(PullUp);
-	options_input.mode(PullUp);
 
 	printf("\033[2J\033[HSekvensseri\n");
 
+	read_thread.start(read_loop);
 	main_ticker.attach(&global_tick_cb,SECONDS_PER_TICK);
 
 	while(1) {
-		// update potentiometer and switch states in non-timed thread
-	
-		swing=Lerp(swing_potentiometer.read(),MIN_SWING,MAX_SWING);
-		bpm=Lerp(tempo_potentiometer.read(),MIN_BPM,MAX_BPM);
-		pattern_length_1 = (int)Lerp(length1_potentiometer.read(),0.5f,16.5f);
-		pattern_length_2 = (int)Lerp(length2_potentiometer.read(),0.5f,16.5f);
-
-		read_matrix();
-
 		print_states();
-
+		ThisThread::sleep_for(200);
 	}
 
 	return 0;
