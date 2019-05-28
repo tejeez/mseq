@@ -6,7 +6,7 @@ template<typename T> T Lerp(T val,T min, T max) {
 
 const float SECONDS_PER_TICK=0.001;
 const float MIN_BPM=20.0,MAX_BPM=200.0;
-const float MIN_SWING=0.1,MAX_SWING=0.9;
+const float MIN_SWING=0.0,MAX_SWING=0.9;
 const int num_of_columns=8, num_of_channels=6, num_of_options=4;
 const int num_of_beats=4; // used for everyother effect
 const int SWITCH_COLUMNS = 18, SWITCH_ROWS = 6;
@@ -15,10 +15,11 @@ const int OPTION1_COLUMN = 16, OPTION2_COLUMN = 17;
 float bpm=125.0, swing=0.0;
 float delta=0.0;
 float pwmScale=1000.0,pwmWidth=500.0;
-int curtick=0,curbeat=0;
+int curtick=0,curbeat=0,curtick2=0;
+int pattern_length_1=16, pattern_length_2=16;
 
 // PREVIOUS == previous channel
-enum RowOption { SWING, EVERYOTHER, PREVIOUS, NEXT, PWM, DOUBLETIME, HALFTIME, MELODYOUTPUT };
+enum RowOption { EVERYOTHER, PREVIOUS, NEXT, PWM, DOUBLETIME, HALFTIME, MELODYOUTPUT };
 
 /*
  * Most pins: 
@@ -41,10 +42,11 @@ DigitalOut bnc2_output[num_of_channels] = {
 	PC_13, PC_14, PC_15
 };
 
-BusIn globalOptions(PG_0, PE_1, PG_9, PG_12); // two left-most switches under the potentiometers. placeholder pins
+BusIn options_input(PG_0, PE_1, PG_9, PG_12); // two left-most switches under the potentiometers. placeholder pins
 
-AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_4), offset_potentiometer(PB_0), pwm_width_potentiometer(PC_0);
+AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_4), length1_potentiometer(PB_0), length2_potentiometer(PC_0);
 
+const uint32_t OPTION_SYNC = 1;
 
 /*
  * Matrix readout stuff:
@@ -103,9 +105,8 @@ void read_matrix() {
 		column_multiplex_selector[col] = 1;
 	}
 
-	globalOptionsCache = (uint32_t)globalOptions;
+	globalOptionsCache = ~(uint32_t)options_input;
 }
-
 
 
 /*
@@ -118,7 +119,7 @@ bool rowOptionOn(RowOption which, int channel) {
 	switch1 = get_switch_state(channel, OPTION1_COLUMN);
 	switch2 = get_switch_state(channel, OPTION2_COLUMN);
 	switch(which) {
-		case SWING:
+		case EVERYOTHER:
 			return switch1 == SWITCH_UP;
 		case MELODYOUTPUT:
 			return switch1 == SWITCH_DOWN;
@@ -139,7 +140,8 @@ void global_tick_cb() {
 		// normalize channel number
 		inputchan=inputchan<0?num_of_channels-1:inputchan>=num_of_channels?0:inputchan;
 
-		enum switch_state sw = get_switch_state(inputchan, curtick);
+		// two lowest rows run from the secondary sequencer
+		enum switch_state sw = get_switch_state(inputchan, i < 4 ? curtick : curtick2);
 
 		if(rowOptionOn(MELODYOUTPUT,i)) {
 			/* One output is switch up, other is switch down */
@@ -157,12 +159,6 @@ void global_tick_cb() {
 			if(sw == SWITCH_DOWN && delta >= 0.5)
 				play_channel = 0;
 
-			if(rowOptionOn(SWING,i)) {
-				// TODO.
-				// would be easier to implement as global option
-				// though, so it could just change bpm every second note
-			}
-
 			if(rowOptionOn(EVERYOTHER,i)) {
 				play_channel=play_channel&&curbeat%2==1;
 			}
@@ -178,11 +174,18 @@ void global_tick_cb() {
 
 	delta += bpm*(4.0f/60.0f*SECONDS_PER_TICK);
 
-	while(delta>=1.0) {
-		delta-=1.0;
+	float delta_max = 1.0f;
+	// delta nominally wraps at 1, but swing is implemented by changing where it wraps
+	if(curtick & 1)
+		delta_max -= swing;
+	else
+		delta_max += swing;
+
+	while(delta>=delta_max) {
+		delta-=delta_max;
 		col_leds[curtick]=0;
 		curtick++;
-		if(curtick>=num_of_columns) {
+		if(curtick>=num_of_columns || curtick >= pattern_length_1) {
 			curtick=0;
 			curbeat++;
 			if(curbeat>=num_of_beats) {
@@ -190,9 +193,22 @@ void global_tick_cb() {
 			}
 		}
 		col_leds[curtick]=1;
+
+		// secondary sequencer
+		col_leds[curtick2]=0;
+		curtick2++;
+		if(curtick2>=num_of_columns || curtick2 >= pattern_length_2) {
+			curtick2=0;
+		}
+		col_leds[curtick2]=1;
+
+		// synchronize secondary sequencer at beginning of pattern if desired
+		if((globalOptionsCache & OPTION_SYNC) && curtick == 0)
+			curtick2 = 0;
+
 		// blink LEDs for testing purpose
-		led1 = (1 & curtick) == 0;
-		led2 = curtick == 0;
+		led1 = curtick == 0;
+		led2 = curtick2 == 0;
 	}
 }
 
@@ -226,6 +242,7 @@ Ticker main_ticker;
 
 int main() {
 	switch_input.mode(PullUp);
+	options_input.mode(PullUp);
 
 	printf("\033[2J\033[HSekvensseri\n");
 
@@ -236,6 +253,8 @@ int main() {
 	
 		swing=Lerp(swing_potentiometer.read(),MIN_SWING,MAX_SWING);
 		bpm=Lerp(tempo_potentiometer.read(),MIN_BPM,MAX_BPM);
+		pattern_length_1 = (int)Lerp(length1_potentiometer.read(),0.5f,16.5f);
+		pattern_length_2 = (int)Lerp(length2_potentiometer.read(),0.5f,16.5f);
 
 		read_matrix();
 
