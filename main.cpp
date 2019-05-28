@@ -18,7 +18,7 @@ float pwmScale=1000.0,pwmWidth=500.0;
 int curtick=0,curbeat=0;
 
 // PREVIOUS == previous channel
-enum RowOption { SWING, EVERYOTHER, PREVIOUS, NEXT, INVERT, PWM, DOUBLETIME, HALFTIME };
+enum RowOption { SWING, EVERYOTHER, PREVIOUS, NEXT, PWM, DOUBLETIME, HALFTIME, MELODYOUTPUT };
 
 /*
  * Most pins: 
@@ -27,13 +27,18 @@ enum RowOption { SWING, EVERYOTHER, PREVIOUS, NEXT, INVERT, PWM, DOUBLETIME, HAL
 DigitalOut led1(LED1), led2(LED2), led3(LED3);
 
 DigitalOut chan_leds[num_of_channels]={
-	PC_11, PD_2, PC_12, PC_10,
-	PF_6, PF_7
+	PH_0, PH_1, PC_2,
+	PC_3, PD_4, PD_5	
 };
 
-DigitalOut bnc_output[num_of_channels] = {
-	PC_10,PC_12,PF_6,
-	PF_7,PA_13,PA_14
+DigitalOut bnc1_output[num_of_channels] = {
+	PC_11, PD_2, PC_12,
+	PC_10, PF_6, PF_7
+};
+
+DigitalOut bnc2_output[num_of_channels] = {
+	PA_13, PA_14, PA_15,
+	PC_13, PC_14, PC_15
 };
 
 BusIn globalOptions(PG_0, PE_1, PG_9, PG_12); // two left-most switches under the potentiometers. placeholder pins
@@ -115,16 +120,12 @@ bool rowOptionOn(RowOption which, int channel) {
 	switch(which) {
 		case SWING:
 			return switch1 == SWITCH_UP;
+		case MELODYOUTPUT:
+			return switch1 == SWITCH_DOWN;
 		case PREVIOUS:
 			return switch2 == SWITCH_UP;
 		case NEXT:
 			return switch2 == SWITCH_DOWN;
-		case DOUBLETIME:
-			return 0;
-		case HALFTIME:
-			return 0;
-		case INVERT:
-			return 0;
 		default:
 			return 0;
 	}
@@ -132,51 +133,49 @@ bool rowOptionOn(RowOption which, int channel) {
 
 
 void global_tick_cb() {
-	uint32_t input_acc=0;
 	for(int i=0;i<num_of_channels;i++) {
 		// prev/next switch for this channel
 		int inputchan = i+rowOptionOn(PREVIOUS,i)?-1:rowOptionOn(NEXT,i)?1:0;
 		// normalize channel number
 		inputchan=inputchan<0?num_of_channels-1:inputchan>=num_of_channels?0:inputchan;
 
-		bool play_channel=false;
-		
 		enum switch_state sw = get_switch_state(inputchan, curtick);
 
-		play_channel = sw != SWITCH_MID;
+		if(rowOptionOn(MELODYOUTPUT,i)) {
+			/* One output is switch up, other is switch down */
+			chan_leds[i]   = sw == SWITCH_UP || sw == SWITCH_DOWN;
+			bnc1_output[i] = sw == SWITCH_UP;
+			bnc2_output[i] = sw == SWITCH_DOWN;
 
-		// short notes
-		if(sw == SWITCH_DOWN && delta >= 0.5)
-			play_channel = 0;
+		} else {
+			/* Switch down is short notes.
+			 * Other BNC output is inverted. */
 
-		if(rowOptionOn(SWING,i)) {
-			if(sw == SWITCH_MID && delta>swing) {
-				play_channel=false;
+			bool play_channel = sw != SWITCH_MID;
+
+			// short notes
+			if(sw == SWITCH_DOWN && delta >= 0.5)
+				play_channel = 0;
+
+			if(rowOptionOn(SWING,i)) {
+				// TODO.
+				// would be easier to implement as global option
+				// though, so it could just change bpm every second note
 			}
+
+			if(rowOptionOn(EVERYOTHER,i)) {
+				play_channel=play_channel&&curbeat%2==1;
+			}
+
+			chan_leds[i]   =  play_channel;
+			bnc1_output[i] =  play_channel;
+			bnc2_output[i] = !play_channel; // inverted
+
+			// led3 to show first sequence for testing purpose
+			if(i==0) led3 = play_channel;
 		}
-
-		if(rowOptionOn(EVERYOTHER,i)) {
-			play_channel=play_channel&&curbeat%2==1;
-		}
-
-		if(rowOptionOn(INVERT,i)) {
-			play_channel=!play_channel;
-		}
-
-		if(rowOptionOn(PWM,i)&&(delta*pwmScale)>pwmWidth) {
-			play_channel=false;
-		}
-
-		if(play_channel) {
-			input_acc^=1<<i;
-		}
-
-		chan_leds[i]=play_channel?1:0;
-		bnc_output[i] = play_channel;
-
-		// led3 to show first sequence for testing purpose
-		if(i==0) led3 = play_channel;
 	}
+
 	delta += bpm*(4.0f/60.0f*SECONDS_PER_TICK);
 
 	while(delta>=1.0) {
