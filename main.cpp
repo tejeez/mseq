@@ -7,11 +7,12 @@ template<typename T> T Lerp(T val,T min, T max) {
 const float SECONDS_PER_TICK=0.001;
 const float MIN_BPM=20.0,MAX_BPM=200.0;
 const float MIN_SWING=0.1,MAX_SWING=0.9;
-const int num_of_columns=16, num_of_channels=6, num_of_options=4;
+const int num_of_columns=8, num_of_channels=6, num_of_options=4;
 const int num_of_beats=4; // used for everyother effect
 const int SWITCH_COLUMNS = 18, SWITCH_ROWS = 6;
+const int OPTION1_COLUMN = 16, OPTION2_COLUMN = 17;
 
-float bpm=120.0, swing=0.0;
+float bpm=125.0, swing=0.0;
 float delta=0.0;
 float pwmScale=1000.0,pwmWidth=500.0;
 int curtick=0,curbeat=0;
@@ -26,20 +27,18 @@ enum RowOption { SWING, EVERYOTHER, PREVIOUS, NEXT, INVERT, PWM, DOUBLETIME, HAL
 DigitalOut led1(LED1), led2(LED2), led3(LED3);
 
 DigitalOut chan_leds[num_of_channels]={
-		PC_13,PC_14,PC_15,
-		PH_0,PH_1,PC_2
-}; // placeholder pins, TODO
+	PC_11, PD_2, PC_12, PC_10,
+	PF_6, PF_7
+};
 
 DigitalOut bnc_output[num_of_channels] = {
 	PC_10,PC_12,PF_6,
 	PF_7,PA_13,PA_14
 };
 
-BusIn globalOptions(); // two left-most switches under the potentiometers
+BusIn globalOptions(PG_0, PE_1, PG_9, PG_12); // two left-most switches under the potentiometers. placeholder pins
 
-
-// TODO choose potentiometer pins
-AnalogIn tempo_potentiometer(), swing_potentiometer(), offset_potentiometer(), pwm_width_potentiometer();
+AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_4), offset_potentiometer(PB_0), pwm_width_potentiometer(PC_0);
 
 
 /*
@@ -59,16 +58,19 @@ DigitalOut column_multiplex_selector[SWITCH_COLUMNS] = {
  * is used to extract the state of an individual switch from the resulting
  * array of bit fields. */
 BusIn switch_input(
-		PG_4,  PG_7,  PD_10, PG_14,
-		PF_12, PF_13, PE_13, PE_15,
-		PE_14, PE_12, PE_10, PD_11);
+		PD_11, PE_10, PE_12, PE_14,
+		PE_15, PE_13, PF_13, PF_12,
+		PG_14, PD_10, PG_7,  PG_4
+);
 
 DigitalOut col_led_out(PE_7);
 
-
+/* State storage: */
 bool col_leds[SWITCH_COLUMNS];
-
+uint32_t globalOptionsCache;
 uint32_t switch_states[SWITCH_COLUMNS];
+
+/* Matrix functions: */
 enum switch_state { SWITCH_BROKEN=0, SWITCH_UP=1, SWITCH_DOWN=2, SWITCH_MID=3 };
 
 enum switch_state get_switch_state(unsigned row, unsigned col) {
@@ -86,17 +88,17 @@ void read_matrix() {
 		column_multiplex_selector[col] = 1;
 	}
 
-	led3 = 1;
 	for(col=0; col<SWITCH_COLUMNS; col++) {
 		column_multiplex_selector[col] = 0;
 		col_led_out = col_leds[col];
 		// do all waiting here so the LED has some time to be on
-		wait(0.01f);
+		wait(0.001f);
 		switch_states[col] = switch_input;
 		col_led_out = 0;
 		column_multiplex_selector[col] = 1;
 	}
-	led3 = 0;
+
+	globalOptionsCache = (uint32_t)globalOptions;
 }
 
 
@@ -106,37 +108,28 @@ void read_matrix() {
  */
 
 
-
-
-long long optionsCache[num_of_options], globalOptionsCache;
-#if 0
-/* TODO: fix this all to make use of cached switch states instead.
- * Also find out how to do all these row options with just two 3-position switches...
- * (invert could be just another output though, so no switch actually needed for that) */
-void readOptions() {
-	globalOptionsCache=globalOptions;
-	for(int i=0;i<num_of_options;i++) {
-		optionsCache[i]=rowOption[i];
+bool rowOptionOn(RowOption which, int channel) {
+	enum switch_state switch1, switch2;
+	switch1 = get_switch_state(channel, OPTION1_COLUMN);
+	switch2 = get_switch_state(channel, OPTION2_COLUMN);
+	switch(which) {
+		case SWING:
+			return switch1 == SWITCH_UP;
+		case PREVIOUS:
+			return switch2 == SWITCH_UP;
+		case NEXT:
+			return switch2 == SWITCH_DOWN;
+		case DOUBLETIME:
+			return 0;
+		case HALFTIME:
+			return 0;
+		case INVERT:
+			return 0;
+		default:
+			return 0;
 	}
 }
-#endif
 
-bool rowOptionOn(RowOption which, int channel) {
-	return 0; // TODO
-#if 0
-	return (globalOptionsCache&0x01&&channel<3&&which==SWING) // for enabling a certain option for certain channels as constant;
-	||	(globalOptionsCache&0x02&&channel<3&&which==EVERYOTHER)
-	||	(globalOptionsCache&0x03&&channel<2&&which==DOUBLETIME)
-	||	(globalOptionsCache&0x04&&channel<2&&which==HALFTIME)
-	||	(which==PREVIOUS&&optionsCache[2][channel]) // for enabling by right-most switch 
-	||	(which==NEXT&&optionsCache[3][channel])
-	||	(which==OFFSET&&optionsCache[0][channel])
-	||	(which==INVERT&&optionsCache[1][channel]);
-#endif
-}
-
-
-Ticker main_ticker;
 
 void global_tick_cb() {
 	uint32_t input_acc=0;
@@ -155,7 +148,7 @@ void global_tick_cb() {
 		// short notes
 		if(sw == SWITCH_DOWN && delta >= 0.5)
 			play_channel = 0;
-#if 0
+
 		if(rowOptionOn(SWING,i)) {
 			if(sw == SWITCH_MID && delta>swing) {
 				play_channel=false;
@@ -173,7 +166,6 @@ void global_tick_cb() {
 		if(rowOptionOn(PWM,i)&&(delta*pwmScale)>pwmWidth) {
 			play_channel=false;
 		}
-#endif
 
 		if(play_channel) {
 			input_acc^=1<<i;
@@ -181,6 +173,9 @@ void global_tick_cb() {
 
 		chan_leds[i]=play_channel?1:0;
 		bnc_output[i] = play_channel;
+
+		// led3 to show first sequence for testing purpose
+		if(i==0) led3 = play_channel;
 	}
 	delta += bpm*(4.0f/60.0f*SECONDS_PER_TICK);
 
@@ -203,6 +198,11 @@ void global_tick_cb() {
 }
 
 
+
+/*
+ * Main loop:
+ */
+
 void print_states() {
 	int row, col;
 	printf("\033[H\n");
@@ -223,6 +223,8 @@ void print_states() {
 }
 
 
+Ticker main_ticker;
+
 int main() {
 	switch_input.mode(PullUp);
 
@@ -233,9 +235,8 @@ int main() {
 	while(1) {
 		// update potentiometer and switch states in non-timed thread
 	
-		// TODO: why is this: error: request for member 'read' in 'swing_potentiometer', which is of non-class type 'mbed::AnalogIn()'
-		swing=Lerp(/*swing_potentiometer.read()*/ .5f,MIN_SWING,MAX_SWING);
-		bpm=Lerp(/*tempo_potentiometer.read()*/ .5f,MIN_BPM,MAX_BPM);
+		swing=Lerp(swing_potentiometer.read(),MIN_SWING,MAX_SWING);
+		bpm=Lerp(tempo_potentiometer.read(),MIN_BPM,MAX_BPM);
 
 		read_matrix();
 
