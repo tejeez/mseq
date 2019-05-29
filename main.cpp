@@ -5,7 +5,7 @@ template<typename T> T Lerp(T val,T min, T max) {
 }
 
 const float SECONDS_PER_TICK=0.001;
-const float MIN_BPM=20.0,MAX_BPM=200.0;
+const float MIN_BPM=70.0,MAX_BPM=200.0;
 const float MIN_SWING=0.0,MAX_SWING=0.9;
 const int num_of_columns=16, num_of_channels=6;
 const int num_of_beats=4; // used for everyother effect
@@ -40,8 +40,10 @@ DigitalOut bnc1_output[num_of_channels] = {
 
 DigitalOut bnc2_output[num_of_channels] = {
 	PA_13, PA_14, PA_15,
-	PC_13, PC_14, PC_15
+	PD_7, PC_14, PC_15
 };
+
+//class AveragedPotentioMeter : 
 
 AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_1), length1_potentiometer(PC_1), length2_potentiometer(PC_0);
 
@@ -49,7 +51,7 @@ DigitalOut column_multiplex_selector[SWITCH_COLUMNS] = {
 	PG_6,  PG_5,  PG_8,  PE_0,
 	PF_11, PF_15, PF_3,  PE_11,
 	PE_9,  PF_14, PD_15, PD_14,
-	PE_7,  PF_10, PE_8,  PF_4,
+	PB_2,  PF_10, PE_8,  PF_4,
 	PF_5,  PB_15, PB_1
 };
 
@@ -112,9 +114,10 @@ bool rowOptionOn(RowOption which, int channel) {
 void global_tick_cb() {
 	for(int i=0;i<num_of_channels;i++) {
 		// prev/next switch for this channel
-		int inputchan = i+rowOptionOn(PREVIOUS,i)?-1:rowOptionOn(NEXT,i)?1:0;
+		//int inputchan = i+rowOptionOn(PREVIOUS,i)?-1:rowOptionOn(NEXT,i)?1:0;
 		// normalize channel number
-		inputchan=inputchan<0?num_of_channels-1:inputchan>=num_of_channels?0:inputchan;
+		//inputchan=inputchan<0?num_of_channels-1:inputchan>=num_of_channels?0:inputchan;
+		int inputchan=i;
 
 		// two lowest rows run from the secondary sequencer
 		enum switch_state sw = get_switch_state(inputchan, i < 4 ? curtick : curtick2);
@@ -199,6 +202,7 @@ void print_states() {
 	printf("\033[H\n");
 	for(row=0; row<SWITCH_ROWS; row++) {
 		for(col=0; col<SWITCH_COLUMNS; col++) {
+			if(col%4==0) putchar('|');
 			char c=' ';
 			switch(get_switch_state(row, col)) {
 				case SWITCH_UP:      c = '^'; break;
@@ -208,12 +212,13 @@ void print_states() {
 			}
 			putchar(c);
 		}
+		putchar('\r');
 		putchar('\n');
 	}
-	printf("\n"
-		"BPM:%6.1f  Swing: %4.2f   \n"
-		"Len1: %2d  Pos1: %2d  \n"
-		"Len2: %2d  Pos2: %2d  \n"
+	printf("\r\n"
+		"BPM:%6.1f  Swing: %4.2f   \r\n"
+		"Len1: %2d  Pos1: %2d  \r\n"
+		"Len2: %2d  Pos2: %2d  \r\n"
 		,bpm, swing, pattern_length_1, curtick, pattern_length_2, curtick2);
 }
 
@@ -251,7 +256,7 @@ void read_matrix() {
 
 		// keep LED on for 2 ms if brightness is 2,
 		// otherwise only for 200 us
-		if(col_leds[col] >= 2) {
+			if(col_leds[col] >= 2) {
 			col_led_out = 1;
 			ThisThread::sleep_for(2);
 		}
