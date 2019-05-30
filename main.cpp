@@ -6,7 +6,7 @@ template<typename T> T Lerp(T val,T min, T max) {
 
 const float SECONDS_PER_TICK=0.001;
 const float MIN_BPM=70.0,MAX_BPM=200.0;
-const float MIN_SWING=0.0,MAX_SWING=0.9;
+const float MIN_SWING=0.0,MAX_SWING=0.7;
 const int num_of_columns=16, num_of_channels=6;
 const int num_of_beats=2;
 const int SWITCH_COLUMNS = 19, SWITCH_ROWS = 6;
@@ -28,10 +28,13 @@ enum RowOption { EVERYOTHER, PREVIOUS, NEXT, PWM, DOUBLETIME, HALFTIME, MELODYOU
 
 DigitalOut led1(LED1), led2(LED2), led3(LED3);
 
+#if 0
+// channels leds not connected
 DigitalOut chan_leds[num_of_channels]={
 	PH_0, PH_1, PC_2,
 	PC_3, PD_4, PD_5	
 };
+#endif
 
 /*
  * 1n - 1i -- PD_7 - PF_7
@@ -57,7 +60,8 @@ DigitalOut bnc2_output[num_of_channels] = {
 //	float buf[100];
 //};
 
-AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PC_1), length1_potentiometer(PA_1), length2_potentiometer(PC_0);
+AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_4);
+//AnalogIn option1_potentiometer(PA_1), option2_potentiometer(PC_0); // wrong pins
 
 DigitalOut column_multiplex_selector[SWITCH_COLUMNS] = {
 	PG_6,  PG_5,  PG_8,  PE_0,
@@ -110,13 +114,14 @@ inline bool rowOptionOn(RowOption which, int channel) {
 	switch2 = get_switch_state(channel, OPTION2_COLUMN);
 	switch(which) {
 		case EVERYOTHER:
-			return channel>=3 && switch1 == SWITCH_UP;
+			// allow on all channels because DOUBLE/HALFTIME are not working
+			return /*channel>=3 && */switch1 == SWITCH_UP;
 		case MELODYOUTPUT:
-			return channel>=3 && switch1 == SWITCH_DOWN;
+			return /*channel>=3 && */switch1 == SWITCH_DOWN;
 		case PREVIOUS:
-			return switch2 == SWITCH_UP;
-		case NEXT:
 			return switch2 == SWITCH_DOWN;
+		case NEXT:
+			return switch2 == SWITCH_UP;
 		case DOUBLETIME:
 			return channel<3 && switch1 == SWITCH_UP;
 		case HALFTIME:
@@ -128,12 +133,20 @@ inline bool rowOptionOn(RowOption which, int channel) {
 
 
 void global_tick_cb() {
+	led2 = (curtick & 3) == 0;
+	led3 = curtick == 0;
 	for(int i=0;i<num_of_channels;i++) {
 		// prev/next switch for this channel
-		//int inputchan = i+rowOptionOn(PREVIOUS,i)?-1:rowOptionOn(NEXT,i)?1:0;
-		// normalize channel number
-		//inputchan=inputchan<0?num_of_channels-1:inputchan>=num_of_channels?0:inputchan;
 		int inputchan=i;
+		if(rowOptionOn(PREVIOUS,i))
+			inputchan--;
+		if(rowOptionOn(NEXT,i))
+			inputchan++;
+		if(inputchan<0)
+			inputchan = num_of_channels-1;
+		if(inputchan >= num_of_channels)
+			inputchan = 0;
+
 
 		enum switch_state sw;
 		/*
@@ -150,7 +163,7 @@ void global_tick_cb() {
 
 		if(rowOptionOn(MELODYOUTPUT,i)) {
 			/* One output is switch up, other is switch down */
-			chan_leds[i]   = sw == SWITCH_UP || sw == SWITCH_DOWN;
+			//chan_leds[i]   = sw == SWITCH_UP || sw == SWITCH_DOWN;
 			bnc1_output[i] = sw == SWITCH_UP;
 			bnc2_output[i] = sw == SWITCH_DOWN;
 		} else {
@@ -167,10 +180,8 @@ void global_tick_cb() {
 				}
 			}
 
-			play_channel = !play_channel; // bnc buffers invert
-
-			chan_leds[i]   =  play_channel;
-			bnc1_output[i] =  play_channel;
+			//chan_leds[i]   =  play_channel;
+			bnc1_output[i] =  !play_channel; // bnc buffers invert
 		/*	
 			if(i==0) {
 				bnc2_output[i] = curtick%2==1; // 16-beat
@@ -180,11 +191,11 @@ void global_tick_cb() {
 				bnc2_output[i] = curbeat%2==1; // 1-beat
 			} else {
 			*/
-				bnc2_output[i] = !play_channel; // inverted
+				bnc2_output[i] = play_channel; // inverted because bnc buffers invert
 			//}
 
 			// led3 to show first sequence for testing purpose
-			if(i==0) led3 = play_channel;
+			if(i==0) led1 = play_channel;
 		}
 	}
 
@@ -211,9 +222,6 @@ void global_tick_cb() {
 			}
 		}
 		col_leds[curtick]=2;
-
-		// blink LEDs for testing purpose
-		led1 = curtick == 0;
 	}
 }
 
