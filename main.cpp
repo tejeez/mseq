@@ -8,16 +8,16 @@ const float SECONDS_PER_TICK=0.001;
 const float MIN_BPM=70.0,MAX_BPM=200.0;
 const float MIN_SWING=0.0,MAX_SWING=0.9;
 const int num_of_columns=16, num_of_channels=6;
-const int num_of_beats=4; // used for everyother effect
+const int num_of_beats=2;
 const int SWITCH_COLUMNS = 19, SWITCH_ROWS = 6;
 const int OPTION1_COLUMN = 16, OPTION2_COLUMN = 17, GLOBAL_OPTION_COLUMN=18;
 
 float bpm=125.0, swing=0.0;
 float delta=0.0;
 float pwmScale=1000.0,pwmWidth=500.0;
-volatile int curtick=0,curtick2=0;
+volatile int curtick=0;
 int curbeat=0;
-int pattern_length_1=16, pattern_length_2=16;
+int pattern_length=16;
 
 // PREVIOUS == previous channel
 enum RowOption { EVERYOTHER, PREVIOUS, NEXT, PWM, DOUBLETIME, HALFTIME, MELODYOUTPUT };
@@ -33,19 +33,31 @@ DigitalOut chan_leds[num_of_channels]={
 	PC_3, PD_4, PD_5	
 };
 
+/*
+ * 1n - 1i -- PD_7 - PF_7
+ * 2n - 2i -- PE_3 - PA_13
+ * 3n - 3i -- PD_6 - PC_12
+ * 4n - 4i -- PA_15 - PC_10
+ * 5n - 5i -- PA_14 - PC_11
+ * 6n - 6i -- PF_6 - PD_2
+ */
+
 DigitalOut bnc1_output[num_of_channels] = {
-	PC_11, PD_2, PC_12,
-	PC_10, PF_6, PF_7
+	PD_7, PE_3, PD_6,
+	PA_15, PA_14, PF_6
 };
 
 DigitalOut bnc2_output[num_of_channels] = {
-	PA_13, PA_14, PA_15,
-	PD_7, PC_14, PC_15
+	PF_7, PA_13, PC_12,
+	PC_10, PC_11, PD_2
 };
 
-//class AveragedPotentioMeter : 
+//class AveragedPotentioMeter {
+//	AnalogIn pot;
+//	float buf[100];
+//};
 
-AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_1), length1_potentiometer(PC_1), length2_potentiometer(PC_0);
+AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PC_1), length1_potentiometer(PA_1), length2_potentiometer(PC_0);
 
 DigitalOut column_multiplex_selector[SWITCH_COLUMNS] = {
 	PG_6,  PG_5,  PG_8,  PE_0,
@@ -92,19 +104,23 @@ enum switch_state get_switch_state(unsigned row, unsigned col) {
  */
 
 
-bool rowOptionOn(RowOption which, int channel) {
+inline bool rowOptionOn(RowOption which, int channel) {
 	enum switch_state switch1, switch2;
 	switch1 = get_switch_state(channel, OPTION1_COLUMN);
 	switch2 = get_switch_state(channel, OPTION2_COLUMN);
 	switch(which) {
 		case EVERYOTHER:
-			return switch1 == SWITCH_UP;
+			return channel>=3 && switch1 == SWITCH_UP;
 		case MELODYOUTPUT:
-			return switch1 == SWITCH_DOWN;
+			return channel>=3 && switch1 == SWITCH_DOWN;
 		case PREVIOUS:
 			return switch2 == SWITCH_UP;
 		case NEXT:
 			return switch2 == SWITCH_DOWN;
+		case DOUBLETIME:
+			return channel<3 && switch1 == SWITCH_UP;
+		case HALFTIME:
+			return channel<3 && switch1 == SWITCH_DOWN;
 		default:
 			return 0;
 	}
@@ -119,42 +135,65 @@ void global_tick_cb() {
 		//inputchan=inputchan<0?num_of_channels-1:inputchan>=num_of_channels?0:inputchan;
 		int inputchan=i;
 
-		// two lowest rows run from the secondary sequencer
-		enum switch_state sw = get_switch_state(inputchan, i < 4 ? curtick : curtick2);
+		enum switch_state sw;
+		/*
+		if(rowOptionOn(HALFTIME,i)) {
+	       		sw = get_switch_state(inputchan,curtick/4+curbeat*8);
+		} else if(rowOptionOn(DOUBLETIME,i)) {
+		*/
+			sw = get_switch_state(inputchan,curtick);
+			/*
+		} else {
+			sw = get_switch_state(inputchan,curtick/2);
+		}
+		*/
 
 		if(rowOptionOn(MELODYOUTPUT,i)) {
 			/* One output is switch up, other is switch down */
 			chan_leds[i]   = sw == SWITCH_UP || sw == SWITCH_DOWN;
 			bnc1_output[i] = sw == SWITCH_UP;
 			bnc2_output[i] = sw == SWITCH_DOWN;
-
 		} else {
 			/* Switch down is short notes.
 			 * Other BNC output is inverted. */
 
 			bool play_channel = sw != SWITCH_MID;
 
-			// short notes
-			if(sw == SWITCH_DOWN && delta >= 0.5)
-				play_channel = 0;
-
-			if(rowOptionOn(EVERYOTHER,i)) {
-				play_channel=play_channel&&curbeat%2==1;
+			if(sw == SWITCH_DOWN) {
+				if(rowOptionOn(EVERYOTHER,i)) {
+					play_channel=play_channel&&curbeat%2==1;
+				} else if(delta >= 0.5) { // short notes
+					play_channel = 0;
+				}
 			}
+
+			play_channel = !play_channel; // bnc buffers invert
 
 			chan_leds[i]   =  play_channel;
 			bnc1_output[i] =  play_channel;
-			bnc2_output[i] = !play_channel; // inverted
+		/*	
+			if(i==0) {
+				bnc2_output[i] = curtick%2==1; // 16-beat
+			} else if(i==1) {
+				bnc2_output[i] = curtick%4>1; // 8-beat
+			} else if(i==2) {
+				bnc2_output[i] = curbeat%2==1; // 1-beat
+			} else {
+			*/
+				bnc2_output[i] = !play_channel; // inverted
+			//}
 
 			// led3 to show first sequence for testing purpose
 			if(i==0) led3 = play_channel;
 		}
 	}
 
+	//delta += bpm*(8.0f/60.0f*SECONDS_PER_TICK);
 	delta += bpm*(4.0f/60.0f*SECONDS_PER_TICK);
 
 	float delta_max = 1.0f;
 	// delta nominally wraps at 1, but swing is implemented by changing where it wraps
+	//if(curtick % 4 >= 2)
 	if(curtick & 1)
 		delta_max -= swing;
 	else
@@ -162,10 +201,9 @@ void global_tick_cb() {
 
 	while(delta>=delta_max) {
 		delta-=delta_max;
-		col_leds[curtick2]=0;
 		col_leds[curtick]=0;
 		curtick++;
-		if(curtick>=num_of_columns || curtick >= pattern_length_1) {
+		if(curtick>=num_of_columns || curtick >= pattern_length) {
 			curtick=0;
 			curbeat++;
 			if(curbeat>=num_of_beats) {
@@ -174,20 +212,8 @@ void global_tick_cb() {
 		}
 		col_leds[curtick]=2;
 
-		// secondary sequencer
-		curtick2++;
-		if(curtick2>=num_of_columns || curtick2 >= pattern_length_2) {
-			curtick2=0;
-		}
-		col_leds[curtick2]=1;
-
-		// synchronize secondary sequencer at beginning of pattern if desired
-		if((globalOptionsCache & OPTION_SYNC) && curtick == 0)
-			curtick2 = 0;
-
 		// blink LEDs for testing purpose
 		led1 = curtick == 0;
-		led2 = curtick2 == 0;
 	}
 }
 
@@ -217,9 +243,8 @@ void print_states() {
 	}
 	printf("\r\n"
 		"BPM:%6.1f  Swing: %4.2f   \r\n"
-		"Len1: %2d  Pos1: %2d  \r\n"
-		"Len2: %2d  Pos2: %2d  \r\n"
-		,bpm, swing, pattern_length_1, curtick, pattern_length_2, curtick2);
+		"Pos: %2d  \r\n"
+		,bpm, swing, curtick);
 }
 
 
@@ -237,8 +262,6 @@ float read_avg(AnalogIn &adc) {
 void read_potentiometers() {
 		bpm   = Lerp(read_avg(tempo_potentiometer) ,MIN_BPM,MAX_BPM);
 		swing = Lerp(read_avg(swing_potentiometer) ,MIN_SWING,MAX_SWING);
-		pattern_length_1 = (int)Lerp(read_avg(length1_potentiometer) ,16.5f,0.5f);
-		pattern_length_2 = (int)Lerp(read_avg(length2_potentiometer) ,16.5f,0.5f);
 }
 
 
@@ -290,6 +313,24 @@ Thread read_thread;
 
 int main() {
 	switch_input.mode(PullUp);
+/*
+	for(int i=0;i<num_of_channels;i++) {
+		bnc1_output[i]=1;
+		bnc2_output[i]=1;
+	}
+
+	int testattava=5;
+	while(1) {
+		printf("on\r\n");
+		bnc2_output[testattava]=1;
+		ThisThread::sleep_for(10);
+		printf("off\r\n");
+		bnc2_output[testattava]=0;
+		ThisThread::sleep_for(10);
+	}
+
+	return 0;
+*/
 
 	printf("\033[2J\033[HSekvensseri\n");
 
