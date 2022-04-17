@@ -1,5 +1,7 @@
 #include "mbed.h"
 
+#define VERSIO_MERKKIJONO "v0.0.2"
+
 template<typename T> T Lerp(T val,T min, T max) {
 	return val*(max-min)+min;
 }
@@ -84,7 +86,7 @@ BusIn switch_input(
 // global option things
 const uint32_t OPTION_SYNC = 1<<8, OPTION_ASDF = 1<<9, OPTION_QWER = 1<<10, OPTION_ZXCV = 1<<11;
 
-DigitalOut col_led_out(PE_7);
+DigitalOut col_led_out(PB_7);
 
 
 /*
@@ -233,7 +235,13 @@ void global_tick_cb() {
 
 void print_states() {
 	int row, col;
-	printf("\033[H\n");
+	printf("\033[HSekvensseri " VERSIO_MERKKIJONO "\n");
+	for(col=0; col<SWITCH_COLUMNS; col++) {
+		if(col%4==0) putchar('|');
+		putchar(col_leds[col]>0 ? 'o' : ' ');
+	}
+	putchar('\r');
+	putchar('\n');
 	for(row=0; row<SWITCH_ROWS; row++) {
 		for(col=0; col<SWITCH_COLUMNS; col++) {
 			if(col%4==0) putchar('|');
