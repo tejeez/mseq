@@ -86,7 +86,7 @@ BusIn switch_input(
 // global option things
 const uint32_t OPTION_SYNC = 1<<8, OPTION_ASDF = 1<<9, OPTION_QWER = 1<<10, OPTION_ZXCV = 1<<11;
 
-DigitalOut col_led_out(PB_7);
+DigitalOut col_led_out(PC_8);
 
 
 /*
