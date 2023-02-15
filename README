@@ -1,5 +1,0 @@
-mbed.org -> mbed cli for linux
-pip requirements.txt wrong version for manifest_*
-https://github.com/python-intelhex/intelhex/issues/45#issuecomment-706585953
-sudo apt install gcc-arm-none-eabi
-

@@ -153,7 +153,7 @@ void global_tick_cb() {
 		enum switch_state sw;
 		/*
 		if(rowOptionOn(HALFTIME,i)) {
-	       		sw = get_switch_state(inputchan,curtick/4+curbeat*8);
+			sw = get_switch_state(inputchan,curtick/4+curbeat*8);
 		} else if(rowOptionOn(DOUBLETIME,i)) {
 		*/
 			sw = get_switch_state(inputchan,curtick);
@@ -297,11 +297,11 @@ void read_matrix() {
 		// otherwise only for 200 us
 			if(col_leds[col] >= 2) {
 			col_led_out = 1;
-			ThisThread::sleep_for(2);
+			ThisThread::sleep_for(2ms);
 		}
 
 		col_led_out = col_leds[col] >= 1;
-		wait(0.0002f);
+		wait_us(200);
 
 		// read switch states after waiting so voltages have settled
 		switch_states[col] = switch_input;
@@ -319,7 +319,7 @@ void read_loop() {
 	for(;;) {
 		read_potentiometers();
 		read_matrix();
-		ThisThread::sleep_for(2);
+		ThisThread::sleep_for(2ms);
 	}
 }
 
@@ -339,10 +339,10 @@ int main() {
 	while(1) {
 		printf("on\r\n");
 		bnc2_output[testattava]=1;
-		ThisThread::sleep_for(10);
+		ThisThread::sleep_for(10ms);
 		printf("off\r\n");
 		bnc2_output[testattava]=0;
-		ThisThread::sleep_for(10);
+		ThisThread::sleep_for(10ms);
 	}
 
 	return 0;
@@ -351,11 +351,13 @@ int main() {
 	printf("\033[2J\033[HSekvensseri\n");
 
 	read_thread.start(read_loop);
-	main_ticker.attach(&global_tick_cb,SECONDS_PER_TICK);
+	// TODO: use the value from SECONDS_PER_TICK. I'm not good enough
+	// with C++ to convert it to the correct type for the new API.
+	main_ticker.attach(&global_tick_cb, 1ms);
 
 	while(1) {
 		print_states();
-		ThisThread::sleep_for(200);
+		ThisThread::sleep_for(200ms);
 	}
 
 	return 0;
