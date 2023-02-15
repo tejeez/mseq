@@ -10,18 +10,24 @@ const float SECONDS_PER_TICK=0.001;
 const float MIN_BPM=70.0,MAX_BPM=200.0;
 const float MIN_SWING=0.0,MAX_SWING=0.7;
 const int num_of_columns=16, num_of_channels=6;
-const int num_of_beats=2;
+const int num_of_bars=2;
 const int SWITCH_COLUMNS = 19, SWITCH_ROWS = 6;
 const int OPTION1_COLUMN = 16, OPTION2_COLUMN = 17, GLOBAL_OPTION_COLUMN=18;
 
 float bpm=125.0, swing=0.0;
 float delta=0.0;
 volatile int curtick=0;
-int curbeat=0;
+int curbar=0;
 int pattern_length=16;
 
-// PREVIOUS == previous channel
-enum RowOption { EVERYOTHER, PREVIOUS, NEXT, DOUBLETIME, HALFTIME, MELODYOUTPUT };
+enum RowOption {
+	PREVIOUS,   // Play pattern from one channel up
+	NEXT,       // Play pattern from one channel lower
+	FIRSTHALF,  // Loop first half of the pattern
+	SECONDHALF, // Loop second half of the pattern
+	HALFSPEED,  // Play pattern at half the speed
+	EVERYOTHER, // Play pattern every second time
+};
 
 /*
  * Most pins: 
@@ -57,7 +63,7 @@ DigitalOut bnc2_output[num_of_channels] = {
 };
 
 AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_4);
-//AnalogIn option1_potentiometer(PA_1), option2_potentiometer(PC_0); // wrong pins
+//AnalogIn length_potentiometer(PA_1), option2_potentiometer(PC_0); // wrong pins
 
 DigitalOut column_multiplex_selector[SWITCH_COLUMNS] = {
 	PG_6,  PG_5,  PG_8,  PE_0,
@@ -85,14 +91,13 @@ DigitalOut col_led_out(PC_8);
  * State storage:
  */
 char col_leds[SWITCH_COLUMNS];
-uint32_t globalOptionsCache;
 uint32_t switch_states[SWITCH_COLUMNS];
 
 enum switch_state { SWITCH_BROKEN=0, SWITCH_UP=1, SWITCH_DOWN=2, SWITCH_MID=3 };
 
 enum switch_state get_switch_state(unsigned row, unsigned col) {
 	if(col >= SWITCH_COLUMNS || row >= SWITCH_ROWS)
-		return SWITCH_DOWN;
+		return SWITCH_MID;
 	return (enum switch_state)((switch_states[col] >> (2*row)) & 3);
 }
 
@@ -103,23 +108,37 @@ enum switch_state get_switch_state(unsigned row, unsigned col) {
 
 
 inline bool rowOptionOn(RowOption which, int channel) {
-	enum switch_state switch1, switch2;
-	switch1 = get_switch_state(channel, OPTION1_COLUMN);
-	switch2 = get_switch_state(channel, OPTION2_COLUMN);
+	// Left channel option switch
+	enum switch_state switch1 = get_switch_state(channel, OPTION1_COLUMN);
+	// Right channel option switch
+	enum switch_state switch2 = get_switch_state(channel, OPTION2_COLUMN);
+	// Upper global option switch
+	// (TODO: check row number)
+	enum switch_state global1 = get_switch_state(0, GLOBAL_OPTION_COLUMN);
+	// Lower global option switch
+	// (TODO: check row number)
+	//enum switch_state global2 = get_switch_state(1, GLOBAL_OPTION_COLUMN);
+
 	switch(which) {
-		case EVERYOTHER:
-			// allow on all channels because DOUBLE/HALFTIME are not working
-			return /*channel>=3 && */switch1 == SWITCH_UP;
-		case MELODYOUTPUT:
-			return /*channel>=3 && */switch1 == SWITCH_DOWN;
 		case PREVIOUS:
 			return switch2 == SWITCH_DOWN;
 		case NEXT:
 			return switch2 == SWITCH_UP;
-		case DOUBLETIME:
-			return channel<3 && switch1 == SWITCH_UP;
-		case HALFTIME:
-			return channel<3 && switch1 == SWITCH_DOWN;
+
+		// Global option changes behaviour of the first channel option switch.
+		// Mid position: firsthalf/secondhalf
+		case FIRSTHALF:
+			return global1 == SWITCH_MID  && switch1 == SWITCH_DOWN;
+		case SECONDHALF:
+			return global1 == SWITCH_MID  && switch1 == SWITCH_UP;
+		// Up position: halfspeed/everyother
+		case HALFSPEED:
+			return global1 == SWITCH_UP   && switch1 == SWITCH_DOWN;
+		case EVERYOTHER:
+			return global1 == SWITCH_UP   && switch1 == SWITCH_UP;
+		// Down position and the whole global2 switch
+		// are available for additional options.
+
 		default:
 			return 0;
 	}
@@ -127,8 +146,11 @@ inline bool rowOptionOn(RowOption which, int channel) {
 
 
 void global_tick_cb() {
-	led2 = (curtick & 3) == 0;
-	led3 = curtick == 0;
+	// LED2 flashes on every fourth tick
+	led2 = (curtick % 4) == 0;
+	// LED3 turns on for every second bar
+	led3 = (curbar % 2) == 0;
+
 	for(int i=0;i<num_of_channels;i++) {
 		// Switch row currently used for this channel
 		int inputchan=i;
@@ -142,32 +164,50 @@ void global_tick_cb() {
 		if(inputchan >= num_of_channels)
 			inputchan = 0;
 
+		// Switch column currently used for this channel
+		int inputcol;
+		// Should this channel be playing at all
+		bool enable_channel = true;
+		// Choose inputcol and enable_channel based on channel mode options
+		if (rowOptionOn(FIRSTHALF, i)) {
+			inputcol = curtick % 8;
+		} else if(rowOptionOn(SECONDHALF, i)) {
+			inputcol = (curtick % 8) + 8;
+		} else if(rowOptionOn(HALFSPEED, i)) {
+			inputcol = (curtick + (curbar%2) * pattern_length) / 2;
+		} else if(rowOptionOn(EVERYOTHER, i)) {
+			inputcol = curtick;
+			if (curbar % 2 == 1)
+				enable_channel = false;
+		} else {
+			// Default mode with no options enabled
+			inputcol = curtick;
+		}
+
 		// Position of switch used for this channel at this tick
 		enum switch_state sw;
-		sw = get_switch_state(inputchan,curtick);
-
-		if(rowOptionOn(MELODYOUTPUT,i)) {
-			/* One output is switch up, other is switch down */
-			bnc1_output[i] = sw == SWITCH_UP;
-			bnc2_output[i] = sw == SWITCH_DOWN;
+		if (enable_channel) {
+			sw = get_switch_state(inputchan, inputcol);
 		} else {
+			sw = SWITCH_MID;
+		}
+
+		if (1) { // there's just one output mode for now
 			/* Switch down is short notes.
 			 * Other BNC output is inverted. */
 
 			bool play_channel = sw != SWITCH_MID;
 
 			if(sw == SWITCH_DOWN) {
-				if(rowOptionOn(EVERYOTHER,i)) {
-					play_channel=play_channel&&curbeat%2==1;
-				} else if(delta >= 0.5) { // short notes
+				if(delta >= 0.5) { // short notes
 					play_channel = 0;
 				}
 			}
 
-			bnc1_output[i] =  !play_channel; // bnc buffers invert
+			bnc1_output[i] = !play_channel; // bnc buffers invert
 			bnc2_output[i] = play_channel; // inverted because bnc buffers invert
 
-			// led3 to show first sequence for testing purpose
+			// LED to show first channel for testing purpose
 			if(i==0) led1 = play_channel;
 		}
 	}
@@ -187,12 +227,12 @@ void global_tick_cb() {
 		curtick++;
 		if(curtick>=num_of_columns || curtick >= pattern_length) {
 			curtick=0;
-			curbeat++;
-			if(curbeat>=num_of_beats) {
-				curbeat=0;
+			curbar++;
+			if(curbar>=num_of_bars) {
+				curbar=0;
 			}
 		}
-		col_leds[curtick]=2;
+		col_leds[curtick % num_of_columns]=2;
 	}
 }
 
@@ -245,8 +285,10 @@ float read_avg(AnalogIn &adc) {
 
 
 void read_potentiometers() {
-		bpm   = Lerp(read_avg(tempo_potentiometer) ,MIN_BPM,MAX_BPM);
-		swing = Lerp(read_avg(swing_potentiometer) ,MIN_SWING,MAX_SWING);
+	bpm   = Lerp(read_avg(tempo_potentiometer), MIN_BPM, MAX_BPM);
+	swing = Lerp(read_avg(swing_potentiometer), MIN_SWING, MAX_SWING);
+	// TODO: check length potentiometer pin
+	//pattern_length = round(Lerp(read_avg(length_potentiometer), 1, 16));
 }
 
 
@@ -279,8 +321,6 @@ void read_matrix() {
 		col_led_out = 0;
 		column_multiplex_selector[col] = 1;
 	}
-
-	globalOptionsCache = ~switch_states[GLOBAL_OPTION_COLUMN];
 }
 
 
