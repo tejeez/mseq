@@ -90,7 +90,17 @@ DigitalOut col_led_out(PC_8);
 /*
  * State storage:
  */
-char col_leds[SWITCH_COLUMNS];
+
+enum led_state {
+	// LED is off
+	LED_OFF = 0,
+	// LED is on with reduced brightness
+	LED_DIM = 1,
+	// LED is on with full brightness
+	LED_BRIGHT = 2,
+};
+// Column LED brightnesses
+enum led_state col_leds[SWITCH_COLUMNS];
 uint32_t switch_states[SWITCH_COLUMNS];
 
 enum switch_state { SWITCH_BROKEN=0, SWITCH_UP=1, SWITCH_DOWN=2, SWITCH_MID=3 };
@@ -223,7 +233,6 @@ void global_tick_cb() {
 
 	while(delta>=delta_max) {
 		delta-=delta_max;
-		col_leds[curtick]=0;
 		curtick++;
 		if(curtick>=num_of_columns || curtick >= pattern_length) {
 			curtick=0;
@@ -232,7 +241,6 @@ void global_tick_cb() {
 				curbar=0;
 			}
 		}
-		col_leds[curtick % num_of_columns]=2;
 	}
 }
 
@@ -292,6 +300,22 @@ void read_potentiometers() {
 }
 
 
+void set_leds(void)
+{
+	for (int i=0; i<SWITCH_COLUMNS; i++) {
+		enum led_state ledstate = LED_OFF;
+		// Show the last step with the current pattern length
+		if (i == pattern_length - 1) {
+			ledstate = LED_DIM;
+		}
+		if (i == curtick) {
+			ledstate = LED_BRIGHT;
+		}
+		col_leds[i] = ledstate;
+	}
+}
+
+
 void read_matrix() {
 	int col;
 	/* Column selector is active low.
@@ -306,12 +330,12 @@ void read_matrix() {
 
 		// keep LED on for 2 ms if brightness is 2,
 		// otherwise only for 200 us
-		if(col_leds[col] >= 2) {
+		if (col_leds[col] >= LED_BRIGHT) {
 			col_led_out = 1;
 			ThisThread::sleep_for(2ms);
 		}
 
-		col_led_out = col_leds[col] >= 1;
+		col_led_out = col_leds[col] >= LED_DIM;
 		wait_us(200);
 
 		// read switch states after waiting so voltages have settled
@@ -327,6 +351,7 @@ void read_matrix() {
 void read_loop() {
 	for(;;) {
 		read_potentiometers();
+		set_leds();
 		read_matrix();
 		ThisThread::sleep_for(2ms);
 	}
