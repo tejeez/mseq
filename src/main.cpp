@@ -1,6 +1,6 @@
 #include "mbed.h"
 
-#define VERSIO_MERKKIJONO "v0.0.2"
+#define VERSIO_MERKKIJONO "v0.0.3"
 
 template<typename T> T Lerp(T val,T min, T max) {
 	return val*(max-min)+min;
@@ -16,13 +16,12 @@ const int OPTION1_COLUMN = 16, OPTION2_COLUMN = 17, GLOBAL_OPTION_COLUMN=18;
 
 float bpm=125.0, swing=0.0;
 float delta=0.0;
-float pwmScale=1000.0,pwmWidth=500.0;
 volatile int curtick=0;
 int curbeat=0;
 int pattern_length=16;
 
 // PREVIOUS == previous channel
-enum RowOption { EVERYOTHER, PREVIOUS, NEXT, PWM, DOUBLETIME, HALFTIME, MELODYOUTPUT };
+enum RowOption { EVERYOTHER, PREVIOUS, NEXT, DOUBLETIME, HALFTIME, MELODYOUTPUT };
 
 /*
  * Most pins: 
@@ -57,11 +56,6 @@ DigitalOut bnc2_output[num_of_channels] = {
 	PC_10, PC_11, PD_2
 };
 
-//class AveragedPotentioMeter {
-//	AnalogIn pot;
-//	float buf[100];
-//};
-
 AnalogIn tempo_potentiometer(PA_0), swing_potentiometer(PA_4);
 //AnalogIn option1_potentiometer(PA_1), option2_potentiometer(PC_0); // wrong pins
 
@@ -83,8 +77,6 @@ BusIn switch_input(
 		PG_14, PD_10, PG_7,  PG_4
 );
 
-// global option things
-const uint32_t OPTION_SYNC = 1<<8, OPTION_ASDF = 1<<9, OPTION_QWER = 1<<10, OPTION_ZXCV = 1<<11;
 
 DigitalOut col_led_out(PC_8);
 
@@ -138,8 +130,9 @@ void global_tick_cb() {
 	led2 = (curtick & 3) == 0;
 	led3 = curtick == 0;
 	for(int i=0;i<num_of_channels;i++) {
-		// prev/next switch for this channel
+		// Switch row currently used for this channel
 		int inputchan=i;
+		// prev/next switch for this channel
 		if(rowOptionOn(PREVIOUS,i))
 			inputchan--;
 		if(rowOptionOn(NEXT,i))
@@ -149,23 +142,12 @@ void global_tick_cb() {
 		if(inputchan >= num_of_channels)
 			inputchan = 0;
 
-
+		// Position of switch used for this channel at this tick
 		enum switch_state sw;
-		/*
-		if(rowOptionOn(HALFTIME,i)) {
-			sw = get_switch_state(inputchan,curtick/4+curbeat*8);
-		} else if(rowOptionOn(DOUBLETIME,i)) {
-		*/
-			sw = get_switch_state(inputchan,curtick);
-			/*
-		} else {
-			sw = get_switch_state(inputchan,curtick/2);
-		}
-		*/
+		sw = get_switch_state(inputchan,curtick);
 
 		if(rowOptionOn(MELODYOUTPUT,i)) {
 			/* One output is switch up, other is switch down */
-			//chan_leds[i]   = sw == SWITCH_UP || sw == SWITCH_DOWN;
 			bnc1_output[i] = sw == SWITCH_UP;
 			bnc2_output[i] = sw == SWITCH_DOWN;
 		} else {
@@ -182,31 +164,18 @@ void global_tick_cb() {
 				}
 			}
 
-			//chan_leds[i]   =  play_channel;
 			bnc1_output[i] =  !play_channel; // bnc buffers invert
-		/*	
-			if(i==0) {
-				bnc2_output[i] = curtick%2==1; // 16-beat
-			} else if(i==1) {
-				bnc2_output[i] = curtick%4>1; // 8-beat
-			} else if(i==2) {
-				bnc2_output[i] = curbeat%2==1; // 1-beat
-			} else {
-			*/
-				bnc2_output[i] = play_channel; // inverted because bnc buffers invert
-			//}
+			bnc2_output[i] = play_channel; // inverted because bnc buffers invert
 
 			// led3 to show first sequence for testing purpose
 			if(i==0) led1 = play_channel;
 		}
 	}
 
-	//delta += bpm*(8.0f/60.0f*SECONDS_PER_TICK);
 	delta += bpm*(4.0f/60.0f*SECONDS_PER_TICK);
 
 	float delta_max = 1.0f;
 	// delta nominally wraps at 1, but swing is implemented by changing where it wraps
-	//if(curtick % 4 >= 2)
 	if(curtick & 1)
 		delta_max -= swing;
 	else
@@ -295,7 +264,7 @@ void read_matrix() {
 
 		// keep LED on for 2 ms if brightness is 2,
 		// otherwise only for 200 us
-			if(col_leds[col] >= 2) {
+		if(col_leds[col] >= 2) {
 			col_led_out = 1;
 			ThisThread::sleep_for(2ms);
 		}
@@ -329,24 +298,6 @@ Thread read_thread;
 
 int main() {
 	switch_input.mode(PullUp);
-/*
-	for(int i=0;i<num_of_channels;i++) {
-		bnc1_output[i]=1;
-		bnc2_output[i]=1;
-	}
-
-	int testattava=5;
-	while(1) {
-		printf("on\r\n");
-		bnc2_output[testattava]=1;
-		ThisThread::sleep_for(10ms);
-		printf("off\r\n");
-		bnc2_output[testattava]=0;
-		ThisThread::sleep_for(10ms);
-	}
-
-	return 0;
-*/
 
 	printf("\033[2J\033[HSekvensseri\n");
 
