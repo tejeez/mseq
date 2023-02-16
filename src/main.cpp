@@ -1,5 +1,11 @@
 #include "mbed.h"
 
+// Note: mbed seems to have a bug in its ADC driver, causing ADC read to crash
+// at some point. To avoid the problem, open
+// "${HOME}/.platformio/packages/framework-mbed/targets/TARGET_STM/TARGET_STM32H7/analogin_device.c"
+// find function adc_read and remove the line analogin_pll_configuration();
+// Maybe we should report a bug, or is it just a problem with our hardware?
+
 // ----------------------
 // Some general functions
 // ----------------------
@@ -13,7 +19,7 @@ template<typename T> T Lerp(T val,T min, T max) {
 // Configuration parameters
 // ------------------------
 
-const char *VERSIO_MERKKIJONO = "v0.0.3";
+const char *VERSIO_MERKKIJONO = "v0.0.4";
 
 const float SECONDS_PER_TICK=0.001;
 const float MIN_BPM=70.0,MAX_BPM=200.0;
@@ -55,13 +61,18 @@ DigitalOut chan_leds[num_of_channels]={
  * 6n - 6i -- PF_6 - PD_2
  */
 
+// PA_13 and PA_14 are SWD pins, so they are needed for programming and debugging.
+// Do not use these!
+// Changed them temporarily to some other placeholder pins to allow debugging,
+// but we should really find other suitable pins for them and modify the hardware.
+
 DigitalOut bnc1_output[num_of_channels] = {
 	PD_7, PE_3, PD_6,
-	PA_15, PA_14, PF_6
+	PA_15, /*PA_14*/PA_15, PF_6
 };
 
 DigitalOut bnc2_output[num_of_channels] = {
-	PF_7, PA_13, PC_12,
+	PF_7, /*PA_13*/PF_7, PC_12,
 	PC_10, PC_11, PD_2
 };
 
@@ -310,10 +321,13 @@ void print_states() {
 		putchar('\r');
 		putchar('\n');
 	}
+	// printf does not support float by default and this did not seem to help:
+	// https://techoverflow.net/2020/10/07/how-to-fix-mbed-printf-printing-literal-f-in-platformio/
+	// so cast them to int instead.
 	printf("\r\n"
-		"BPM:%6.1f  Swing: %4.2f  Length: %2d  \r\n"
+		"BPM:%3d  Swing: %3d%%  Length: %2d  \r\n"
 		"Pos: %2d  Bar: %2d  \r\n"
-		,bpm, swing, pattern_length
+		,(int)bpm, (int)(100.0f*swing), pattern_length
 		,curtick_v, curbar_v);
 }
 
