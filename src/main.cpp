@@ -1,37 +1,40 @@
 #include "mbed.h"
 
-#define VERSIO_MERKKIJONO "v0.0.3"
+// ----------------------
+// Some general functions
+// ----------------------
 
 template<typename T> T Lerp(T val,T min, T max) {
 	return val*(max-min)+min;
 }
 
+
+// ------------------------
+// Configuration parameters
+// ------------------------
+
+const char *VERSIO_MERKKIJONO = "v0.0.3";
+
 const float SECONDS_PER_TICK=0.001;
 const float MIN_BPM=70.0,MAX_BPM=200.0;
 const float MIN_SWING=0.0,MAX_SWING=0.7;
+const float MIN_LENGTH=1.0f, MAX_LENGTH=16.4f;
 const int num_of_columns=16, num_of_channels=6;
 const int num_of_bars=2;
+
+
+// ------------------------------
+// Pinout and hardware interfaces
+//-------------------------------
+
+// Number of rows and columns in switch matrix
 const int SWITCH_COLUMNS = 19, SWITCH_ROWS = 6;
-const int OPTION1_COLUMN = 16, OPTION2_COLUMN = 17, GLOBAL_OPTION_COLUMN=18;
-
-float bpm=125.0, swing=0.0;
-float delta=0.0;
-volatile int curtick=0;
-int curbar=0;
-int pattern_length=16;
-
-enum RowOption {
-	PREVIOUS,   // Play pattern from one channel up
-	NEXT,       // Play pattern from one channel lower
-	FIRSTHALF,  // Loop first half of the pattern
-	SECONDHALF, // Loop second half of the pattern
-	HALFSPEED,  // Play pattern at half the speed
-	EVERYOTHER, // Play pattern every second time
-};
-
-/*
- * Most pins: 
- */
+// Switch matrix columns used for channel option switches
+const int OPTION1_COLUMN = 16, OPTION2_COLUMN = 17;
+// Switch matrix column used for global option switches
+const int GLOBAL_OPTION_COLUMN = 18;
+// Switch matrix rows used for global option switches
+const int GLOBAL_OPTION1_ROW = 4, GLOBAL_OPTION2_ROW = 5;
 
 DigitalOut led1(LED1), led2(LED2), led3(LED3);
 
@@ -43,7 +46,7 @@ DigitalOut chan_leds[num_of_channels]={
 };
 #endif
 
-/*
+/* Channel output pins:
  * 1n - 1i -- PD_7 - PF_7
  * 2n - 2i -- PE_3 - PA_13
  * 3n - 3i -- PD_6 - PC_12
@@ -87,9 +90,9 @@ BusIn switch_input(
 DigitalOut col_led_out(PC_8);
 
 
-/*
- * State storage:
- */
+// -------------------------------
+// States of switch and LED matrix
+// -------------------------------
 
 enum led_state {
 	// LED is off
@@ -101,33 +104,56 @@ enum led_state {
 };
 // Column LED brightnesses
 enum led_state col_leds[SWITCH_COLUMNS];
+
+// Switch positions as bit fields read from switch_input bus
 uint32_t switch_states[SWITCH_COLUMNS];
 
+// Position of a single switch as an enum
 enum switch_state { SWITCH_BROKEN=0, SWITCH_UP=1, SWITCH_DOWN=2, SWITCH_MID=3 };
 
-enum switch_state get_switch_state(unsigned row, unsigned col) {
+// Get the position of a single switch
+inline enum switch_state get_switch_state(unsigned row, unsigned col) {
 	if(col >= SWITCH_COLUMNS || row >= SWITCH_ROWS)
 		return SWITCH_MID;
 	return (enum switch_state)((switch_states[col] >> (2*row)) & 3);
 }
 
 
-/*
- * Sequencer logic:
- */
+
+// ---------------
+// Sequencer state
+// ---------------
+
+float bpm=125.0, swing=0.0;
+int pattern_length=16;
+
+volatile float delta_v = 0.0;
+volatile int curtick_v = 0;
+volatile int curbar_v = 0;
 
 
-inline bool rowOptionOn(RowOption which, int channel) {
+// ---------------
+// Sequencer logic
+// ---------------
+
+enum RowOption {
+	PREVIOUS,   // Play pattern from one channel up
+	NEXT,       // Play pattern from one channel lower
+	FIRSTHALF,  // Loop first half of the pattern
+	SECONDHALF, // Loop second half of the pattern
+	HALFSPEED,  // Play pattern at half the speed
+	EVERYOTHER, // Play pattern every second time
+};
+
+bool rowOptionOn(RowOption which, int channel) {
 	// Left channel option switch
 	enum switch_state switch1 = get_switch_state(channel, OPTION1_COLUMN);
 	// Right channel option switch
 	enum switch_state switch2 = get_switch_state(channel, OPTION2_COLUMN);
 	// Upper global option switch
-	// (TODO: check row number)
-	enum switch_state global1 = get_switch_state(0, GLOBAL_OPTION_COLUMN);
+	enum switch_state global1 = get_switch_state(GLOBAL_OPTION1_ROW, GLOBAL_OPTION_COLUMN);
 	// Lower global option switch
-	// (TODO: check row number)
-	//enum switch_state global2 = get_switch_state(1, GLOBAL_OPTION_COLUMN);
+	//enum switch_state global2 = get_switch_state(GLOBAL_OPTION2_ROW, GLOBAL_OPTION_COLUMN);
 
 	switch(which) {
 		case PREVIOUS:
@@ -156,6 +182,11 @@ inline bool rowOptionOn(RowOption which, int channel) {
 
 
 void global_tick_cb() {
+	// Copy volatiles to local variables to avoid weird surprises
+	// if they are changed somewhere else during the function.
+	int curtick = curtick_v, curbar = curbar_v;
+	float delta = delta_v;
+
 	// LED2 flashes on every fourth tick
 	led2 = (curtick % 4) == 0;
 	// LED3 turns on for every second bar
@@ -242,17 +273,22 @@ void global_tick_cb() {
 			}
 		}
 	}
+
+	// Write variables back to volatiles
+	curtick_v = curtick;
+	curbar_v = curbar;
+	delta_v = delta;
 }
 
 
 
-/*
- * Main loops:
- */
+// ----------
+// Main loops
+// ----------
 
 void print_states() {
 	int row, col;
-	printf("\033[HSekvensseri " VERSIO_MERKKIJONO "\n");
+	printf("\033[HSekvensseri %s\r\n", VERSIO_MERKKIJONO);
 	for(col=0; col<SWITCH_COLUMNS; col++) {
 		if(col%4==0) putchar('|');
 		putchar(col_leds[col]>0 ? 'o' : ' ');
@@ -275,9 +311,10 @@ void print_states() {
 		putchar('\n');
 	}
 	printf("\r\n"
-		"BPM:%6.1f  Swing: %4.2f   \r\n"
-		"Pos: %2d  \r\n"
-		,bpm, swing, curtick);
+		"BPM:%6.1f  Swing: %4.2f  Length: %2d  \r\n"
+		"Pos: %2d  Bar: %2d  \r\n"
+		,bpm, swing, pattern_length
+		,curtick_v, curbar_v);
 }
 
 
@@ -296,12 +333,13 @@ void read_potentiometers() {
 	bpm   = Lerp(read_avg(tempo_potentiometer), MIN_BPM, MAX_BPM);
 	swing = Lerp(read_avg(swing_potentiometer), MIN_SWING, MAX_SWING);
 	// TODO: check length potentiometer pin
-	//pattern_length = round(Lerp(read_avg(length_potentiometer), 1, 16));
+	//pattern_length = round(Lerp(read_avg(length_potentiometer), MIN_LENGTH, MAX_LENGTH));
 }
 
 
 void set_leds(void)
 {
+	const int curtick = curtick_v;
 	for (int i=0; i<SWITCH_COLUMNS; i++) {
 		enum led_state ledstate = LED_OFF;
 		// Show the last step with the current pattern length
@@ -364,7 +402,7 @@ Thread read_thread;
 int main() {
 	switch_input.mode(PullUp);
 
-	printf("\033[2J\033[HSekvensseri\n");
+	printf("\033[2J\033[HSekvensseri %s\r\n", VERSIO_MERKKIJONO);
 
 	read_thread.start(read_loop);
 	// TODO: use the value from SECONDS_PER_TICK. I'm not good enough
