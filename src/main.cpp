@@ -46,6 +46,10 @@ DigitalOut led1(LED1), led2(LED2), led3(LED3);
 
 #if 0
 // channels leds not connected
+//
+// Two of these could possibly be used to replace PA_13 and PA_14 below.
+// If channel output LEDs are added, they could be made a part of the
+// switch matrix and use just 1 additional pin instead of 6.
 DigitalOut chan_leds[num_of_channels]={
 	PH_0, PH_1, PC_2,
 	PC_3, PD_4, PD_5	
@@ -62,17 +66,17 @@ DigitalOut chan_leds[num_of_channels]={
  */
 
 // PA_13 and PA_14 are SWD pins, so they are needed for programming and debugging.
-// Do not use these!
-// Changed them temporarily to some other placeholder pins to allow debugging,
-// but we should really find other suitable pins for them and modify the hardware.
+// They are currently used as outputs but that prevents use of a debugger
+// and needs tricks with BOOT0 and reset to program.
+// They should be moved to a different pin.
 
 DigitalOut bnc1_output[num_of_channels] = {
 	PD_7, PE_3, PD_6,
-	PA_15, /*PA_14*/PA_15, PF_6
+	PA_15, PA_14 /*TODO: change this pin in hardware*/, PF_6
 };
 
 DigitalOut bnc2_output[num_of_channels] = {
-	PF_7, /*PA_13*/PF_7, PC_12,
+	PF_7, PA_13 /*TODO: change this pin in hardware*/, PC_12,
 	PC_10, PC_11, PD_2
 };
 
