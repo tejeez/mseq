@@ -56,27 +56,20 @@ DigitalOut chan_leds[num_of_channels]={
 };
 #endif
 
-/* Channel output pins:
- * 1n - 1i -- PD_7 - PF_7
- * 2n - 2i -- PE_3 - PA_13
- * 3n - 3i -- PD_6 - PC_12
- * 4n - 4i -- PA_15 - PC_10
- * 5n - 5i -- PA_14 - PC_11
- * 6n - 6i -- PF_6 - PD_2
- */
-
 // PA_13 and PA_14 are SWD pins, so they are needed for programming and debugging.
 // They are currently used as outputs but that prevents use of a debugger
 // and needs tricks with BOOT0 and reset to program.
 // They should be moved to a different pin.
 
+// Channel output pins, left column
 DigitalOut bnc1_output[num_of_channels] = {
 	PD_7, PE_3, PD_6,
-	PA_15, PA_14 /*TODO: change this pin in hardware*/, PF_6
+	PA_15, /*PA_14*/ PC_2 /*TODO: change this pin in hardware*/, PF_6
 };
 
+// Channel output pins, right column
 DigitalOut bnc2_output[num_of_channels] = {
-	PF_7, PA_13 /*TODO: change this pin in hardware*/, PC_12,
+	PF_7, /*PA_13*/ PC_3 /*TODO: change this pin in hardware*/, PC_12,
 	PC_10, PC_11, PD_2
 };
 
@@ -415,7 +408,9 @@ void read_loop() {
 
 
 Ticker main_ticker;
-Thread read_thread;
+// Run read_thread at higher priority so that running print_states
+// in another thread won't affect timing of matrix readout that much.
+Thread read_thread(osPriorityAboveNormal);
 
 int main() {
 	switch_input.mode(PullUp);
